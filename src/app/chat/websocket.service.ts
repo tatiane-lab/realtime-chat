@@ -6,9 +6,9 @@ import {
   inject,
   NgZone,
 } from '@angular/core';
-import { Subject, Observable, timer, EMPTY, throwError } from 'rxjs';
+import { Subject, Observable, timer, EMPTY } from 'rxjs';
 import { webSocket, WebSocketSubject } from 'rxjs/webSocket';
-import { retryWhen, delayWhen, tap, switchMap, catchError } from 'rxjs/operators';
+import { retry, tap, catchError } from 'rxjs/operators';
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -55,29 +55,17 @@ export class WebSocketService implements OnDestroy {
 
     return this.socket$.pipe(
       tap((msg) => this.messages$.next(msg)),
-      retryWhen((errors) =>
-        errors.pipe(
-          tap(() => {
-            this.retryCount++;
-            this.zone.run(() => this.connectionState.set('connecting'));
-          }),
-          delayWhen(() => {
-            if (this.retryCount >= MAX_RETRIES) {
-              this.zone.run(() => this.connectionState.set('error'));
-              return throwError(() => new Error('Max reconnect attempts reached'));
-            }
-            const delay = Math.min(
-              BASE_DELAY_MS * Math.pow(2, this.retryCount - 1),
-              MAX_DELAY_MS
-            );
-            return timer(delay);
-          })
-        )
-      ),
-      catchError((err) => {
+      retry({
+        count: MAX_RETRIES,
+        delay: (_err, attempt) => {
+          this.zone.run(() => this.connectionState.set('connecting'));
+          return timer(Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS));
+        },
+      }),
+      catchError(() => {
         this.zone.run(() => this.connectionState.set('error'));
         return EMPTY;
-      })
+      }),
     );
   }
 
